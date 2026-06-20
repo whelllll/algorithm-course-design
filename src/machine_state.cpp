@@ -19,6 +19,10 @@ bool MachineState::canEverRun(const Job &job, int gpu_used) const {
            job.memory <= spec.memory;
 }
 
+int MachineState::remainingGpu() const {
+    return remaining_gpu;
+}
+
 bool MachineState::canStart(const Job &job, int gpu_used) const {
     return gpu_used <= remaining_gpu &&
            job.cpu_cores <= remaining_cpu &&

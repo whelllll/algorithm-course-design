@@ -140,15 +140,26 @@ void GreedyScheduler::tryStartPendingJobs(
 
 GreedyScheduler::StartResult GreedyScheduler::tryStartOneJob(const Job &job, long long current_time) {
     const vector<pair<int, int>> &entries = feasible_machines.at(job.job_id);
+    int best_index = -1;
+    int best_gpu_used = 0;
+    int best_remaining = -1;
     for (size_t idx = 0; idx < entries.size(); ++idx) {
         int machine_index = entries[idx].first;
         int gpu_used = entries[idx].second;
         if (machines[machine_index].canStart(job, gpu_used)) {
-            pair<ScheduleRecord, RunningJob> result = machines[machine_index].startJob(job, current_time, gpu_used);
-            return StartResult{true, result.first, result.second};
+            int remaining = machines[machine_index].remainingGpu() - gpu_used;
+            if (best_index == -1 || remaining < best_remaining) {
+                best_index = machine_index;
+                best_gpu_used = gpu_used;
+                best_remaining = remaining;
+            }
         }
     }
-    return StartResult{};
+    if (best_index == -1) {
+        return StartResult{};
+    }
+    pair<ScheduleRecord, RunningJob> result = machines[best_index].startJob(job, current_time, best_gpu_used);
+    return StartResult{true, result.first, result.second};
 }
 
 long long GreedyScheduler::nextEventTime(
