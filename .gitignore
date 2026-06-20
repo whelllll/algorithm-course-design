@@ -2,3 +2,7 @@ build/
 *.exe
 *.o
 .DS_Store
+result*.txt
+results_baseline/
+results_wspT/
+__pycache__/
