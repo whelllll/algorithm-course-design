@@ -68,6 +68,23 @@ v2.0的核心思路：**让系统学会"插队"——权重高、耗时短的任
 3. **极端case适配**：部分大case（如case090-100）GPU显存紧张，可能需要在排序中加入GPU资源因素。
 4. **没有回溯**：当前是纯贪心，做了决定就不会改。元启发式可以通过"推翻重来"找到更好的解。
 
+### 文献来源
+
+**核心参考：WSPT规则**
+
+| 文献 | 说明 |
+|------|------|
+| **Pinedo, M.L.** (2016). *Scheduling: Theory, Algorithms, and Systems* (5th ed.). Springer. | 调度理论经典教材，第3章系统介绍WSPT规则及其在多机调度中的启发式应用 |
+| **Smith, W.E.** (1956). Various optimizers for single-stage production. *Naval Research Logistics Quarterly*, 3(1-2), 59-66. | WSPT的原始论文，首次证明按 weight/duration 排序可最小化加权完成时间之和 |
+
+**延伸参考：GPU集群调度（场景最接近）**
+
+| 文献 | 说明 |
+|------|------|
+| **Gu, J. et al.** (2019). Tiresias: A GPU cluster manager for distributed deep learning. *NSDI'19*. | 提出"预估时长 × 优先级"排序，本质为WSPT在GPU集群场景的变种 |
+| **Xiao, W. et al.** (2018). Gandiva: Introspective cluster scheduling for deep learning. *OSDI'18*. | 异构GPU环境下的调度策略，处理GPU/显存异构性 |
+| **Graham, R.L.** (1966). Bounds for certain multiprocessing anomalies. *Bell System Technical Journal*, 45(9), 1563-1581. | List Scheduling奠基之作，v1.0基线贪心调度的理论来源 |
+
 ### 修改文件
 
 - `src/scheduler.h`：新增 CompareJobPriority 比较器，等待队列改为优先队列
