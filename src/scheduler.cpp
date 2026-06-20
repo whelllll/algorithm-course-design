@@ -4,7 +4,6 @@
 #include <stdexcept>
 
 using namespace std;
-//注释
 
 bool compareServerById(const ServerSpec &a, const ServerSpec &b) {
     return a.server_id < b.server_id;
@@ -14,6 +13,13 @@ bool compareJobByRelease(const Job &a, const Job &b) {
     if (a.release_time != b.release_time) return a.release_time < b.release_time;
     if (a.duration != b.duration) return a.duration < b.duration;
     return a.job_id < b.job_id;
+}
+
+bool CompareJobPriority::operator()(const Job &a, const Job &b) const {
+    double ratio_a = static_cast<double>(a.weight) / a.duration;
+    double ratio_b = static_cast<double>(b.weight) / b.duration;
+    if (ratio_a != ratio_b) return ratio_a < ratio_b;
+    return a.job_id > b.job_id;
 }
 
 bool FinishEvent::operator>(const FinishEvent &other) const {
@@ -44,7 +50,7 @@ vector<ScheduleRecord> GreedyScheduler::schedule() {
 
     long long current_time = jobs.front().release_time;
     int next_job_index = 0;
-    queue<Job> pending_jobs;
+    priority_queue<Job, vector<Job>, CompareJobPriority> pending_jobs;
     unordered_map<int, ScheduleRecord> records;
     priority_queue<FinishEvent, vector<FinishEvent>, greater<FinishEvent>> running_heap;
 
@@ -107,13 +113,13 @@ void GreedyScheduler::releaseFinishedJobs(
 }
 
 void GreedyScheduler::tryStartPendingJobs(
-    queue<Job> &pending_jobs,
+    priority_queue<Job, vector<Job>, CompareJobPriority> &pending_jobs,
     long long current_time,
     unordered_map<int, ScheduleRecord> &records,
     priority_queue<FinishEvent, vector<FinishEvent>, greater<FinishEvent>> &running_heap
 ) {
     while (!pending_jobs.empty()) {
-        Job job = pending_jobs.front();
+        Job job = pending_jobs.top();
         auto started = tryStartOneJob(job, current_time);
         if (!started.has_value) {
             break;

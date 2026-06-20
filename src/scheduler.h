@@ -8,6 +8,10 @@
 #include "machine_state.h"
 #include "models.h"
 
+struct CompareJobPriority {
+    bool operator()(const Job &a, const Job &b) const;
+};
+
 struct FinishEvent {
     long long finish_time;
     int server_id;
@@ -36,7 +40,7 @@ private:
         std::priority_queue<FinishEvent, std::vector<FinishEvent>, std::greater<FinishEvent>> &running_heap
     );
     void tryStartPendingJobs(
-        std::queue<Job> &pending_jobs,
+        std::priority_queue<Job, std::vector<Job>, CompareJobPriority> &pending_jobs,
         long long current_time,
         std::unordered_map<int, ScheduleRecord> &records,
         std::priority_queue<FinishEvent, std::vector<FinishEvent>, std::greater<FinishEvent>> &running_heap
