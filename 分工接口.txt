@@ -2,10 +2,30 @@
 
 ---
 
+零、Git分支说明（给B和C）
+
+  两个分支，角色不同：
+
+  feature/pengxinyu（工作分支）：
+    - A日常改代码，每一小版都push到这里
+    - 上面有所有版本：v1.0 v2.0 v3.0 v3.1 v4.0 v4.1 v4.2 v4.3 v4.4 ...
+    - 包括失败/废弃的版本，完整实验记录
+
+  develop（精选分支）：
+    - 只放每一代的最终选定版
+    - 当前：v2.0 → v3.1 → v4.2
+    - 没有中间试错版
+
+  B日常测试：pull feature/pengxinyu（拿到A最新代码）
+  B需要稳定版：pull develop（拿到各代最佳）
+  C写报告：看develop就行，上面只有干净的各代升级路径
+
+---
+
 一、给B（王湛溶）— 工程与测试
 
 日常工作流：
-  你push代码到feature/pengxinyu → B pull → B跑全量 → B告诉你哪个case退步了
+  A push代码到feature/pengxinyu → B pull feature/pengxinyu → B跑全量 → B告诉你哪个case退步了
 
 B需要准备的东西：
   1. 跑分脚本：确认 batch_evaluate.py 能在自己电脑上跑通
