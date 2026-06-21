@@ -16,8 +16,8 @@ bool compareJobByRelease(const Job &a, const Job &b) {
 }
 
 bool CompareJobPriority::operator()(const Job &a, const Job &b) const {
-    double ratio_a = static_cast<double>(a.weight) / a.duration;
-    double ratio_b = static_cast<double>(b.weight) / b.duration;
+    double ratio_a = static_cast<double>(a.weight) / (a.duration * a.min_gpu);
+    double ratio_b = static_cast<double>(b.weight) / (b.duration * b.min_gpu);
     if (ratio_a != ratio_b) return ratio_a < ratio_b;
     return a.job_id > b.job_id;
 }
@@ -63,10 +63,14 @@ vector<ScheduleRecord> GreedyScheduler::schedule() {
             ++next_job_index;
         }
 
-        tryStartPendingJobs(pending_jobs, current_time, records, running_heap);
+        tryStartPendingJobs(pending_jobs, current_time, next_job_index, records, running_heap);
 
         if (static_cast<int>(records.size()) == static_cast<int>(jobs.size())) {
             break;
+        }
+
+        if (running_heap.empty() && next_job_index >= static_cast<int>(jobs.size())) {
+            throw runtime_error("Deadlock: no future event exists");
         }
 
         current_time = nextEventTime(current_time, next_job_index, running_heap);
@@ -115,12 +119,14 @@ void GreedyScheduler::releaseFinishedJobs(
 void GreedyScheduler::tryStartPendingJobs(
     priority_queue<Job, vector<Job>, CompareJobPriority> &pending_jobs,
     long long current_time,
+    int next_job_index,
     unordered_map<int, ScheduleRecord> &records,
     priority_queue<FinishEvent, vector<FinishEvent>, greater<FinishEvent>> &running_heap
 ) {
     while (!pending_jobs.empty()) {
         Job job = pending_jobs.top();
-        auto started = tryStartOneJob(job, current_time);
+        int avoid_server = shouldAvoidServer(job, current_time, next_job_index);
+        auto started = tryStartOneJobAvoid(job, current_time, avoid_server);
         if (!started.has_value) {
             break;
         }
@@ -136,6 +142,70 @@ void GreedyScheduler::tryStartPendingJobs(
             }
         );
     }
+}
+
+int GreedyScheduler::shouldAvoidServer(const Job &current_job, long long current_time,
+                                       int next_job_index) const {
+    if (next_job_index >= static_cast<int>(jobs.size())) {
+        return -1;
+    }
+
+    const Job &next_job = jobs[next_job_index];
+    long long wait_time = next_job.release_time - current_time;
+    if (wait_time <= 0 || wait_time > 15) {
+        return -1;
+    }
+
+    double current_wsp = static_cast<double>(current_job.weight) / current_job.duration;
+    double next_wsp = static_cast<double>(next_job.weight) / next_job.duration;
+    if (next_wsp <= current_wsp * 2.0) {
+        return -1;
+    }
+
+    const auto &next_feasible = feasible_machines.at(next_job.job_id);
+    if (next_feasible.size() != 1) {
+        return -1;
+    }
+
+    return machines[next_feasible[0].first].spec.server_id;
+}
+
+GreedyScheduler::StartResult GreedyScheduler::tryStartOneJobAvoid(
+    const Job &job, long long current_time, int avoid_server) {
+    const vector<pair<int, int>> &entries = feasible_machines.at(job.job_id);
+    int best_index = -1;
+    int best_gpu_used = 0;
+    int best_remaining = -1;
+    bool found_non_avoid = false;
+
+    for (size_t idx = 0; idx < entries.size(); ++idx) {
+        int machine_index = entries[idx].first;
+        int gpu_used = entries[idx].second;
+        if (!machines[machine_index].canStart(job, gpu_used)) {
+            continue;
+        }
+        bool is_avoided = (machines[machine_index].spec.server_id == avoid_server);
+        int remaining = machines[machine_index].remainingGpu() - gpu_used;
+
+        if (!is_avoided && !found_non_avoid) {
+            best_index = machine_index;
+            best_gpu_used = gpu_used;
+            best_remaining = remaining;
+            found_non_avoid = true;
+        } else if (is_avoided && found_non_avoid) {
+            continue;
+        } else if (best_index == -1 || remaining < best_remaining) {
+            best_index = machine_index;
+            best_gpu_used = gpu_used;
+            best_remaining = remaining;
+        }
+    }
+
+    if (best_index == -1) {
+        return StartResult{};
+    }
+    pair<ScheduleRecord, RunningJob> result = machines[best_index].startJob(job, current_time, best_gpu_used);
+    return StartResult{true, result.first, result.second};
 }
 
 GreedyScheduler::StartResult GreedyScheduler::tryStartOneJob(const Job &job, long long current_time) {

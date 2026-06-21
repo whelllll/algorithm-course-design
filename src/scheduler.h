@@ -42,10 +42,13 @@ private:
     void tryStartPendingJobs(
         std::priority_queue<Job, std::vector<Job>, CompareJobPriority> &pending_jobs,
         long long current_time,
+        int next_job_index,
         std::unordered_map<int, ScheduleRecord> &records,
         std::priority_queue<FinishEvent, std::vector<FinishEvent>, std::greater<FinishEvent>> &running_heap
     );
+    int shouldAvoidServer(const Job &current_job, long long current_time, int next_job_index) const;
     StartResult tryStartOneJob(const Job &job, long long current_time);
+    StartResult tryStartOneJobAvoid(const Job &job, long long current_time, int avoid_server);
     long long nextEventTime(
         long long current_time,
         int next_job_index,

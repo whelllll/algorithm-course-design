@@ -1,8 +1,131 @@
 # 算法迭代记录
 
+## 版本总览
+
+| 版本 | 日期 | 排序 | 选服务器 | E_wait | E_memory | E_finish | 状态 |
+|------|------|------|----------|--------|----------|----------|------|
+| v1.0 | 06-18 | release_time→duration | First-Fit | 335,177,183 | 162.74 | 29,947 | 起点 |
+| v2.0 | 06-20 | **WSPT** | First-Fit | 177,961,377 | 161.21 | 29,483 | **← 采用** |
+| v3.0 | 06-20 | 纯权重优先 | First-Fit | 207,599,369 | 161.77 | 30,065 | |
+| **v3.1** | **06-20** | **WSPT** | **Best-Fit** | **171,930,372** | **160.21** | **28,873** | **← 当前** |
+| v4.0 | 06-21 | WSPT | Best-Fit + hold | — | — | — | |
+| v4.1 | 06-21 | WSPT | Best-Fit + 避让 | 171,930,371 | 160.21 | 28,872 | |
+| v4.2 | 06-21 | **GPU-WSPT (min_gpu)** | Best-Fit | 168,518,611 | 161.42 | 29,022 | |
+| v4.3 | 06-21 | GPU-WSPT (gpu_memory) | Best-Fit | 169,631,683 | 161.90 | 29,427 | |
+| v4.4 | 06-21 | GPU-WSPT (min_gpu) | Worst-Fit | 186,806,096 | 166.50 | 32,171 | |
+
 ---
 
-## v3.0 — WSPT + Best-Fit选服务器（2026-06-20）
+## v4.4 — Worst-Fit选服务器（2026-06-21）
+
+### 改了什么
+
+在v4.2基础上，选服务器从Best-Fit改为Worst-Fit。
+
+```
+Best-Fit：  选放下后GPU剩余最少的（塞紧）
+Worst-Fit： 选放下后GPU剩余最多的（留余地）
+```
+
+### 结果
+
+| 指标 | v4.2 Best-Fit | v4.4 Worst-Fit | 变化 |
+|------|-------------|---------------|------|
+| E_wait | 168,518,611 | 186,806,096 | **+10.9%** |
+| E_memory | 161.42 | 166.50 | +3.1% |
+| E_finish | 29,022 | 32,171 | +10.9% |
+
+三项全面退步。Worst-Fit留余地的策略在此场景无效——服务器GPU资源多了就浪费，不如Best-Fit塞紧减少碎片。
+
+---
+
+## v4.3 — GPU加权WSPT用gpu_memory（2026-06-21）
+
+### 改了什么
+
+在v4.2基础上，把 min_gpu 换成 gpu_memory。
+
+```
+v4.2  GPU-WSPT(min_gpu)：  优先级 = weight / (duration × min_gpu)
+v4.3  GPU-WSPT(memory)：   优先级 = weight / (duration × gpu_memory)
+```
+
+### 结果
+
+| 指标 | v4.2 | v4.3 | 变化 |
+|------|------|------|------|
+| E_wait | 168,518,611 | 169,631,683 | +0.7% |
+| E_memory | 161.42 | 161.90 | +0.3% |
+| E_finish | 29,022 | 29,427 | +1.4% |
+
+三项全不如v4.2。min_gpu比gpu_memory更适合做GPU资源因子。
+
+---
+
+## v4.2 — GPU加权WSPT（2026-06-21）
+
+### 改了什么
+
+排序公式从 `weight/duration` 改为 `weight/(duration × min_gpu)`。
+
+```
+v3.1  WSPT：       优先级 = weight / duration
+v4.2  GPU-WSPT：   优先级 = weight / (duration × min_gpu)
+```
+
+直觉：两个任务weight和duration一样，一个吃1张GPU、一个吃8张GPU。吃1张的先跑——占资源少，跑完释放快。
+
+### 结果（100个case平均）
+
+| 指标 | v3.1 | v4.2 | 变化 |
+|------|------|------|------|
+| E_wait | 171,930,372 | 168,518,611 | **-2.0%** |
+| E_memory | 160.21 | 161.42 | +0.8% |
+| E_finish | 28,873 | 29,022 | +0.5% |
+
+E_wait继续降2%，E_memory和E_finish小幅退步。三个指标出现trade-off——GPU轻量任务优先减少等待但轻微牺牲利用率和总完成时间。
+
+### 修改文件
+
+- `src/scheduler.cpp`：CompareJobPriority 公式，分母加入 min_gpu
+
+---
+
+## v4.1 — 避让服务器（2026-06-21）
+
+### 思路
+
+不改变"塞不塞"，改"塞哪台"——如果下一个到达的高优先级任务只能跑在某台服务器上，当前任务选其他服务器，把那台留给他。
+
+### 触发条件
+
+下一个任务15秒内到 + WSPT高2倍 + 唯一可行服务器 → 避开那台
+
+### 结果
+
+100/100全过，但三个指标和v3.1几乎一模一样。触发条件在实际数据中极少满足。
+
+### 修改文件
+
+- `src/scheduler.h`：新增 shouldAvoidServer / tryStartOneJobAvoid
+- `src/scheduler.cpp`：实现避让服务器逻辑
+- `src/machine_state.h`：加了 remainingCpu() / remainingMemory()
+
+---
+
+## v4.0 — Hold暂停放行（2026-06-21）
+
+### 思路
+
+塞之前看一眼下一个到达的任务——如果它WSPT高很多且马上就到，故意不塞当前任务，空着服务器等。
+
+### 结果
+
+大面积死锁（72/100 case崩溃）。hold造成特殊执行顺序，running_heap空但服务器资源未回收。
+
+---
+
+## v3.1 — WSPT + Best-Fit选服务器（2026-06-20）← 当前最优
 
 ### 改了什么
 
@@ -17,16 +140,15 @@ Best-Fit（新） ：遍历所有服务器，选"放下后GPU剩余最少"的那
 
 First-Fit对第一台服务器有偏好，导致第一台塞满、后面的服务器闲着（E_finish差）。Best-Fit通过"选最紧的能放下的地方"，减少资源碎片，让GPU分配更均匀。
 
-
 ### 结果（100个case平均）
 
-| 指标 | v2.0 WSPT | v3.0 Best-Fit | 变化 |
-|------|-----------|-------------|------|
+| 指标 | v2.0 | v3.1 | 变化 |
+|------|------|------|------|
 | E_wait | 177,961,377 | 171,930,372 | **-3.4%** |
 | E_memory | 161.21 | 160.21 | -0.6% |
 | E_finish | 29,483 | 28,873 | **-2.1%** |
 
-**三个指标全面提升，Best-Fit有效。**
+**三个指标全面提升。**
 
 ### 修改文件
 
@@ -35,137 +157,88 @@ First-Fit对第一台服务器有偏好，导致第一台塞满、后面的服�
 
 ---
 
-## v3.0 — 权重优先排序（Tiresias风格）· 已废弃（2026-06-20）
+## v3.0 — 纯权重优先排序 · 未采用（2026-06-20）
 
 ### 尝试内容
 
-受Tiresias(Gu et al., 2019)启发，测试纯权重优先排序：先按 weight 降序排列，weight相同时再按 duration 升序排列。
+受Tiresias启发，测试纯权重优先排序：先按 weight 降序，weight相同时再按 duration 升序。
 
 ### 与WSPT的区别
 
 ```
-WSPT：          优先级 = weight / duration（综合权衡）
-Tiresias风格：   优先级 = weight（VIP绝对优先）
+v2.0 WSPT：    优先级 = weight / duration（综合权衡）
+v3.0 纯权重：  优先级 = weight（VIP绝对优先）
 ```
 
 ### 结果（100个case平均）
 
-| 指标 | v2.0 WSPT | v3.0 权重优先 | 变化 |
-|------|-----------|-------------|------|
-| E_wait | 177,961,377 | 207,599,369 | **+16.6%（变差）** |
+| 指标 | v2.0 | v3.0 | 变化 |
+|------|------|------|------|
+| E_wait | 177,961,377 | 207,599,369 | **+16.6%** |
 | E_memory | 161.21 | 161.77 | +0.3% |
 | E_finish | 29,483 | 30,065 | +2.0% |
 
-### 结论
+### 分析
 
-**WSPT全面优于纯权重优先。** 纯权重优先会导致低权重短任务被长时间搁置，而短任务本可以快速完成释放资源，反而拖累整体。WSPT通过"权重/时长"的比值，在"重要性"和"快速完成"之间取得了更好的平衡。
-
-**决策：放弃此方向，保留v2.0 WSPT。**
+纯权重优先导致低权重短任务被长时间搁置，短任务本可以快速完成释放资源，反而拖累整体。WSPT通过"权重/时长"在重要性和快速完成之间取得了更好的平衡。
 
 ---
 
-## v2.0 — WSPT优先队列调度（2026-06-20）
+## v2.0 — WSPT排序（2026-06-20）
 
-### 为什么从v1.0升级到v2.0？
+### 为什么从v1.0升级
 
-v1.0的"先到先服务"完全不考虑任务的重要性和紧急程度。一个权重为1的短任务和一个权重为12的长任务同时到达，v1.0随意排序，导致高权重任务可能等很久，E_wait分数很差。
+v1.0先到先服务完全不考虑任务的重要性和紧急程度。高权重任务可能等很久。核心思路：**权重高、耗时短的任务优先执行。**
 
-v2.0的核心思路：**让系统学会"插队"——权重高、耗时短的任务优先执行。**
+### 公式
 
-### 和v1.0的区别
+优先级 = weight / duration
 
-| | v1.0（老师基线） | v2.0（WSPT） |
-|---|---|---|
-| **排序规则** | 按到达时间排，先到先服务 | 按 weight/duration 优先，高权重短任务插队 |
-| **等待队列** | 普通队列（FIFO，不能插队） | 优先队列（高优先级的自动排前面） |
-| **选服务器** | 第一个能跑的就放（first-fit） | 同v1.0，未改 |
-| **时间复杂度** | O(n*m)，n=任务数，m=服务器数 | 同v1.0，未增加 |
-
-### 用到的算法：WSPT（Weighted Shortest Processing Time）
-
-- **来源**：经典调度理论，Pinedo《Scheduling: Theory, Algorithms, and Systems》
-- **公式**：任务优先级 = weight / duration
-- **直觉**：餐厅VIP且只点一碗面的客人，先给他上菜
-- **实现位置**：`src/scheduler.h` 第11-13行（CompareJobPriority），`src/scheduler.cpp` 第28-33行
+直觉：VIP且只点一碗面 → 先上。
 
 ### 效果（100个case平均）
 
-| 指标 | v1.0基线 | v2.0 WSPT | 变化 |
-|------|----------|-----------|------|
+| 指标 | v1.0 | v2.0 | 变化 |
+|------|------|------|------|
 | E_wait | 335,177,183 | 177,961,377 | **-47.0%** |
 | E_memory | 162.74 | 161.21 | -0.9% |
 | E_finish | 29,947 | 29,483 | -1.5% |
-
-**E_wait几乎砍半，另外两个指标也有小幅提升。三个指标全面优于基线。**
-
-### 后续可以尝试的算法
-
-#### 近期（继续改排序规则，不改架构）
-| 排序策略 | 公式 | 适合场景 |
-|----------|------|---------|
-| 纯权重优先 | priority = weight | 极度重视VIP任务 |
-| 短任务优先 | priority = -duration | 快速清空积压 |
-| 资源紧张度优先 | weight / (gpu_memory * duration) | GPU显存是瓶颈时 |
-| EDD规则 | priority = 1/(duration+release) | 考虑截止时间压力 |
-| 多因素加权 | α×weight/duration + β×weight/gpu_memory | 综合权衡 |
-
-#### 中期（改选服务器策略）
-| 策略 | 说明 |
-|------|------|
-| Best-Fit | 不选第一个能跑的，选"剩余资源刚好够"的，减少碎片 |
-| Worst-Fit | 选剩余资源最多的，留余地给大任务 |
-| 负载均衡 | 优先把任务放到当前任务最少的服务器 |
-
-#### 后期（元启发式算法，冲刺高分）
-| 算法 | 说明 |
-|------|------|
-| 模拟退火 | 先贪心得到一个解，然后随机扰动，偶尔接受差解来跳出局部最优 |
-| 迭代局部搜索 | 贪心解 → 扰动(swap/move) → 局部优化 → 重复，取最优 |
-| 波束搜索 | 每次不只选一个任务，保留top-K个可能的分支继续搜 |
-
-### 已知不足和改进方向
-
-1. **选服务器还是first-fit**：目前只改了排序，选服务器仍然是"第一个能跑的"。改成best-fit可能再降E_memory。
-2. **没有考虑任务之间的资源竞争**：当多个高权重任务都要大量GPU时，当前策略不会预留资源。
-3. **极端case适配**：部分大case（如case090-100）GPU显存紧张，可能需要在排序中加入GPU资源因素。
-4. **没有回溯**：当前是纯贪心，做了决定就不会改。元启发式可以通过"推翻重来"找到更好的解。
-
-### 文献来源
-
-**核心参考：WSPT规则**
-
-| 文献 | 说明 |
-|------|------|
-| **Pinedo, M.L.** (2016). *Scheduling: Theory, Algorithms, and Systems* (5th ed.). Springer. | 调度理论经典教材，第3章系统介绍WSPT规则及其在多机调度中的启发式应用 |
-| **Smith, W.E.** (1956). Various optimizers for single-stage production. *Naval Research Logistics Quarterly*, 3(1-2), 59-66. | WSPT的原始论文，首次证明按 weight/duration 排序可最小化加权完成时间之和 |
-
-**延伸参考：GPU集群调度（场景最接近）**
-
-| 文献 | 说明 |
-|------|------|
-| **Gu, J. et al.** (2019). Tiresias: A GPU cluster manager for distributed deep learning. *NSDI'19*. | 提出"预估时长 × 优先级"排序，本质为WSPT在GPU集群场景的变种 |
-| **Xiao, W. et al.** (2018). Gandiva: Introspective cluster scheduling for deep learning. *OSDI'18*. | 异构GPU环境下的调度策略，处理GPU/显存异构性 |
-| **Graham, R.L.** (1966). Bounds for certain multiprocessing anomalies. *Bell System Technical Journal*, 45(9), 1563-1581. | List Scheduling奠基之作，v1.0基线贪心调度的理论来源 |
 
 ### 修改文件
 
 - `src/scheduler.h`：新增 CompareJobPriority 比较器，等待队列改为优先队列
 - `src/scheduler.cpp`：实现WSPT比较逻辑
-- `evaluate.py`：新增本地评分脚本
-- `batch_evaluate.py`：新增批量跑分脚本
+- `evaluate.py` / `batch_evaluate.py`：新增评测脚本
 
 ---
 
-## v1.0 — 基线贪心调度器（老师示例代码）
+## v1.0 — 基线（2026-06-18）
 
-### 算法描述
+老师提供的 C++ CMake 示例代码。
 
-- **排序规则**：按 release_time → duration → job_id 排序（先到先服务）
-- **选服务器策略**：First-Fit（遍历服务器列表，选第一个满足资源要求的）
-- **算法类型**：纯贪心（Greedy），无回溯，无学习
-
-### 来源
-
-老师提供的 C++ CMake 示例代码
+- **排序**：release_time → duration → job_id（先到先服务）
+- **选服务器**：First-Fit
+- **算法**：纯贪心，无回溯
 
 ---
+
+## 文献参考
+
+| 文献 | 说明 |
+|------|------|
+| **Pinedo, M.L.** (2016). *Scheduling: Theory, Algorithms, and Systems* (5th ed.). Springer. | 调度理论教材，WSPT规则 |
+| **Smith, W.E.** (1956). *Naval Research Logistics Quarterly*, 3(1-2), 59-66. | WSPT原始论文 |
+| **Gu, J. et al.** (2019). Tiresias: A GPU cluster manager for distributed deep learning. *NSDI'19*. | GPU集群调度，WSPT变种 |
+| **Xiao, W. et al.** (2018). Gandiva: Introspective cluster scheduling for deep learning. *OSDI'18*. | 异构GPU调度 |
+| **Graham, R.L.** (1966). *Bell System Technical Journal*. | List Scheduling奠基 |
+
+## 后续方向
+
+| 类别 | 方向 | 说明 |
+|------|------|------|
+| 排序 | GPU加权WSPT | weight / (duration × GPU因素) |
+| 排序 | 多因素加权 | α×WSPT + β×资源紧张度 |
+| 选服务器 | Worst-Fit | 选剩余最多的，给大任务留余地 |
+| 选服务器 | 负载均衡 | 优先放任务最少的服务器 |
+| 元启发 | 模拟退火 | 贪心初始解 → 扰动 → 偶尔接受差解 |
+| 元启发 | 迭代局部搜索 | 贪心 → 扰动 → 局部优化 → 重复 |

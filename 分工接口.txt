@@ -1,0 +1,83 @@
+三人分工接口
+
+---
+
+一、给B（王湛溶）— 工程与测试
+
+日常工作流：
+  你push代码到feature/pengxinyu → B pull → B跑全量 → B告诉你哪个case退步了
+
+B需要准备的东西：
+  1. 跑分脚本：确认 batch_evaluate.py 能在自己电脑上跑通
+  2. 输出格式：每次跑完100个case，给你这样的反馈：
+
+====================================
+  本次版本：v4.1
+  全量100个case，成功100个
+  平均 E_wait: 171,930,371  E_memory: 160.21  E_finish: 28,872
+
+  退步case（相比上一版）：
+    case010: E_wait +5%
+    case042: E_finish +8%
+
+  进步case：
+    case007: E_wait -12%
+====================================
+
+  B不需要分析原因（那是A的活），但要准确告诉A哪个case哪个指标变了、变了多少。
+
+B现在可以做：
+  先在本地跑通 batch_evaluate.py，把v3.1的结果跑一遍当baseline存起来，
+  后面A每次push都重新跑一次，对比变化。
+
+
+二、给C（曹庆庆）— 报告与答辩
+
+A这边已经有的、可以写进答辩的东西：
+
+  借鉴的论文：
+    - Pinedo《Scheduling: Theory, Algorithms, and Systems》WSPT规则
+    - Tiresias(Gu et al., 2019, NSDI'19)：GPU集群调度，2DAS框架
+    - Gandiva(Xiao et al., 2018, OSDI'18)：异构GPU调度
+
+  核心算法策略：
+    - v1.0: 基线贪心（先到先服务）
+    - v2.0: WSPT排序（weight/duration，E_wait -47%）
+    - v3.1: Best-Fit选服务器（选GPU剩余最少的，E_wait再-3.4%）
+    总提升：E_wait 从 335M → 172M，下降 49%
+
+  创新点：
+    WSPT是经典调度理论，Best-Fit是操作系统内存分配算法，
+    不是照搬论文——是跨领域迁移应用到GPU集群调度场景。
+
+  试错过程（说明不是瞎试）：
+    - v3.0 纯权重优先：放弃，三个指标全变差
+    - v4.x 放行策略：在当前数据上无效（任务密度不够）
+    每次尝试都有明确假设和结论。
+
+  答辩素材来源：
+    - changelog.md 是英文报告的素材库，每个版本的"改了什么""原理""结果"可以直接翻译
+    - 版本总览表在changelog最上面，可以直接用做提升曲线图
+    - 伪代码：让C从 src/scheduler.cpp 的核心函数提炼
+
+  跟C的接口：
+    - A每次push后更新changelog，C从中取素材
+    - B的测试数据给C做图表
+    - 需要伪代码时A可以现场给C讲代码逻辑
+
+
+三、三人接口一句话总结
+
+  A(彭欣雨) → 改scheduler.cpp → push + 更新changelog → 通知B
+  B(王湛溶) → pull → 跑batch_evaluate → 出对比报告 → 扔给A和C
+  C(曹庆庆) → 从changelog取素材 → 从B取数据做图 → 写报告+做PPT
+
+
+四、关键时间节点
+
+  6/24  测试赛1（可选）
+  6/28  测试赛2（可选）
+  7/1   测试赛3（可选）
+  7/5   测试赛4（可选）
+  7/8   正式赛提交
+  7/9   答辩PPT + 英文报告
