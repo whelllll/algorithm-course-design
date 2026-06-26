@@ -40,7 +40,7 @@ private:
         std::priority_queue<FinishEvent, std::vector<FinishEvent>, std::greater<FinishEvent>> &running_heap
     );
     void tryStartPendingJobs(
-        std::priority_queue<Job, std::vector<Job>, CompareJobPriority> &pending_jobs,
+        std::vector<Job> &pending_jobs,
         long long current_time,
         int next_job_index,
         std::unordered_map<int, ScheduleRecord> &records,

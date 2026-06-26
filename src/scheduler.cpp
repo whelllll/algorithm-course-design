@@ -16,8 +16,8 @@ bool compareJobByRelease(const Job &a, const Job &b) {
 }
 
 bool CompareJobPriority::operator()(const Job &a, const Job &b) const {
-    double ratio_a = static_cast<double>(a.weight) / (a.duration * a.min_gpu);
-    double ratio_b = static_cast<double>(b.weight) / (b.duration * b.min_gpu);
+    double ratio_a = static_cast<double>(a.weight) / a.duration;
+    double ratio_b = static_cast<double>(b.weight) / b.duration;
     if (ratio_a != ratio_b) return ratio_a < ratio_b;
     return a.job_id > b.job_id;
 }
@@ -50,7 +50,7 @@ vector<ScheduleRecord> GreedyScheduler::schedule() {
 
     long long current_time = jobs.front().release_time;
     int next_job_index = 0;
-    priority_queue<Job, vector<Job>, CompareJobPriority> pending_jobs;
+    vector<Job> pending_jobs;
     unordered_map<int, ScheduleRecord> records;
     priority_queue<FinishEvent, vector<FinishEvent>, greater<FinishEvent>> running_heap;
 
@@ -59,7 +59,7 @@ vector<ScheduleRecord> GreedyScheduler::schedule() {
 
         while (next_job_index < static_cast<int>(jobs.size()) &&
                jobs[next_job_index].release_time <= current_time) {
-            pending_jobs.push(jobs[next_job_index]);
+            pending_jobs.push_back(jobs[next_job_index]);
             ++next_job_index;
         }
 
@@ -117,31 +117,44 @@ void GreedyScheduler::releaseFinishedJobs(
 }
 
 void GreedyScheduler::tryStartPendingJobs(
-    priority_queue<Job, vector<Job>, CompareJobPriority> &pending_jobs,
+    vector<Job> &pending_jobs,
     long long current_time,
     int next_job_index,
     unordered_map<int, ScheduleRecord> &records,
     priority_queue<FinishEvent, vector<FinishEvent>, greater<FinishEvent>> &running_heap
 ) {
-    while (!pending_jobs.empty()) {
-        Job job = pending_jobs.top();
-        int avoid_server = shouldAvoidServer(job, current_time, next_job_index);
-        auto started = tryStartOneJobAvoid(job, current_time, avoid_server);
-        if (!started.has_value) {
-            break;
-        }
+    if (pending_jobs.empty()) return;
 
-        pending_jobs.pop();
-        records[job.job_id] = started.record;
-        running_heap.push(
-            FinishEvent{
-                started.running_job.finish_time,
-                started.running_job.server_id,
-                started.running_job.job_id,
-                started.running_job,
-            }
-        );
+    sort(pending_jobs.begin(), pending_jobs.end(),
+        [current_time](const Job &a, const Job &b) {
+            long long wait_a = current_time - a.release_time;
+            long long wait_b = current_time - b.release_time;
+            if (wait_a < 0) wait_a = 0;
+            if (wait_b < 0) wait_b = 0;
+            double priority_a = static_cast<double>(a.weight) * (wait_a + 1) / a.duration;
+            double priority_b = static_cast<double>(b.weight) * (wait_b + 1) / b.duration;
+            if (priority_a != priority_b) return priority_a > priority_b;
+            return a.job_id < b.job_id;
+        });
+
+    vector<Job> still_pending;
+    for (auto &job : pending_jobs) {
+        auto started = tryStartOneJob(job, current_time);
+        if (started.has_value) {
+            records[job.job_id] = started.record;
+            running_heap.push(
+                FinishEvent{
+                    started.running_job.finish_time,
+                    started.running_job.server_id,
+                    started.running_job.job_id,
+                    started.running_job,
+                }
+            );
+        } else {
+            still_pending.push_back(job);
+        }
     }
+    pending_jobs = move(still_pending);
 }
 
 int GreedyScheduler::shouldAvoidServer(const Job &current_job, long long current_time,
