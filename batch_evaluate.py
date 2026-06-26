@@ -1,8 +1,11 @@
 import os
 import subprocess
+import sys
 import time
 
-exe = "build/execname"
+exe = "build\\execname.exe"
+data_dir = sys.argv[2] if len(sys.argv) > 2 else "data"
+result_dir = sys.argv[1] if len(sys.argv) > 1 else "results"
 
 def evaluate_single_case(case_id):
     in_file = f"data/case{case_id:03d}.in"
