@@ -225,17 +225,31 @@ GreedyScheduler::StartResult GreedyScheduler::tryStartOneJob(const Job &job, lon
     const vector<pair<int, int>> &entries = feasible_machines.at(job.job_id);
     int best_index = -1;
     int best_gpu_used = 0;
+    int best_waste = -1;
     int best_remaining = -1;
     for (size_t idx = 0; idx < entries.size(); ++idx) {
         int machine_index = entries[idx].first;
         int gpu_used = entries[idx].second;
-        if (machines[machine_index].canStart(job, gpu_used)) {
-            int remaining = machines[machine_index].remainingGpu() - gpu_used;
-            if (best_index == -1 || remaining < best_remaining) {
-                best_index = machine_index;
-                best_gpu_used = gpu_used;
-                best_remaining = remaining;
-            }
+        if (!machines[machine_index].canStart(job, gpu_used)) {
+            continue;
+        }
+        int VG_si = machines[machine_index].spec.gpu_memory;
+        int waste = gpu_used * VG_si - job.gpu_memory;
+        if (waste < 0) waste = 0;
+        int remaining = machines[machine_index].remainingGpu() - gpu_used;
+        bool better = false;
+        if (best_index == -1) {
+            better = true;
+        } else if (waste != best_waste) {
+            better = waste < best_waste;
+        } else {
+            better = remaining < best_remaining;
+        }
+        if (better) {
+            best_index = machine_index;
+            best_gpu_used = gpu_used;
+            best_waste = waste;
+            best_remaining = remaining;
         }
     }
     if (best_index == -1) {
